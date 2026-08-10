@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI-Driven Secure File Sharing Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <h1>Secure File Sharing Dashboard</h1>
+        
+        <div class="card">
+            <h2>Simulate File Transfer</h2>
+            <form class="upload-form" id="uploadForm">
+                <input type="file" id="fileInput" name="file" required><br>
+                <label for="simulateAttack">Simulate Network Attack:</label>
+                <select id="simulateAttack">
+                    <option value="none">None (Normal Traffic)</option>
+                    <option value="dos">DoS / DDoS</option>
+                    <option value="portscan">PortScan</option>
+                    <option value="bruteforce">Brute Force (FTP)</option>
+                    <option value="webattack">Web Attack</option>
+                    <option value="botnet">Botnet ARES</option>
+                </select><br><br>
+                <button type="submit">Upload Securely</button>
+            </form>
+            <div id="uploadResult" style="margin-top: 15px;"></div>
+        </div>
+
+        <div class="card">
+            <h2>Security Audit Log</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Filename</th>
+                        <th>Encryption</th>
+                        <th>IDS Prediction</th>
+                        <th>Response Action</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for log in logs %}
+                    <tr>
+                        <td>{{ log.timestamp[:19] }}</td>
+                        <td>{{ log.filename }}</td>
+                        <td>{{ log.encryption_status }}<br><small>{{ log.signature_status }}</small></td>
+                        <td>{{ log.ids_prediction }} <br><small>Conf: {{ "%.2f"|format(log.ids_confidence) }}</small></td>
+                        <td class="{% if log.response_action == 'Blocked' %}status-blocked{% else %}status-allowed{% endif %}">
+                            {{ log.response_action }}
+                        </td>
+                        <td>
+                            {% if log.response_action != 'Blocked' %}
+                            <a href="/download/{{ log.filename }}" target="_blank" style="text-decoration: none; background: var(--primary); color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.85em; margin-right: 5px;">Download</a>
+                            <button onclick="deleteFile('{{ log.filename }}')" style="background: #f44336; color: white; padding: 4px 8px; border: none; border-radius: 4px; font-size: 0.85em; cursor: pointer;">Delete</button>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="card">
+            <h2>Analytics & Evidence (Project Defense)</h2>
+            <p>Empirical evidence of the Random Forest model's accuracy and CPU resource protection.</p>
+            <div style="display: flex; gap: 20px; overflow-x: auto;">
+                <img src="{{ url_for('static', path='confusion_matrix.png') }}" alt="Confusion Matrix" style="max-width: 400px; border-radius: 8px;">
+                <img src="{{ url_for('static', path='benchmark.png') }}" alt="CPU Benchmark" style="max-width: 400px; border-radius: 8px;">
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('uploadForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const fileInput = document.getElementById('fileInput');
+            const attackType = document.getElementById('simulateAttack').value;
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+            
+            // Mock network features based on selection to trick the IDS model
+            let networkFeatures = {};
+            if (attackType === 'dos') {
+                networkFeatures = {"Destination Port": 80, "Average Packet Size": 0.0, "Packet Length Mean": 0.0, "Fwd IAT Mean": 4.0, "Total Fwd Packets": 2, "PSH Flag Count": 0, "Bwd Packet Length Min": 0, "Bwd Packetss": 0.0, "Init_Win_bytes_forward": 251, "Fwd IAT Max": 4};
+            } else if (attackType === 'portscan') {
+                networkFeatures = {"Destination Port": 1131, "Average Packet Size": 3.0, "Packet Length Mean": 2.0, "Fwd IAT Mean": 0.0, "Total Fwd Packets": 1, "PSH Flag Count": 1, "Bwd Packet Length Min": 6, "Bwd Packetss": 27027.02703, "Init_Win_bytes_forward": 29200, "Fwd IAT Max": 0};
+            } else if (attackType === 'bruteforce') {
+                networkFeatures = {"Destination Port": 21, "Average Packet Size": 12.08333333, "Packet Length Mean": 11.6, "Fwd IAT Mean": 688609.875, "Total Fwd Packets": 9, "PSH Flag Count": 1, "Bwd Packet Length Min": 0, "Bwd Packetss": 1.716918977, "Init_Win_bytes_forward": 29200, "Fwd IAT Max": 2880558};
+            } else if (attackType === 'webattack') {
+                networkFeatures = {"Destination Port": 80, "Average Packet Size": 0.0, "Packet Length Mean": 0.0, "Fwd IAT Mean": 2765352.0, "Total Fwd Packets": 3, "PSH Flag Count": 1, "Bwd Packet Length Min": 0, "Bwd Packetss": 0.180808808, "Init_Win_bytes_forward": 29200, "Fwd IAT Max": 5529944};
+            } else if (attackType === 'botnet') {
+                networkFeatures = {"Destination Port": 5070, "Average Packet Size": 9.0, "Packet Length Mean": 6.0, "Fwd IAT Mean": 0.0, "Total Fwd Packets": 1, "PSH Flag Count": 0, "Bwd Packet Length Min": 6, "Bwd Packetss": 12345.67901, "Init_Win_bytes_forward": 237, "Fwd IAT Max": 0};
+            } else if (attackType === 'none') {
+                networkFeatures = {"Destination Port": 443, "Average Packet Size": 294.6666667, "Packet Length Mean": 276.25, "Fwd IAT Mean": 30927.88889, "Total Fwd Packets": 10, "PSH Flag Count": 1, "Bwd Packet Length Min": 0, "Bwd Packetss": 17.96293169, "Init_Win_bytes_forward": 8192, "Fwd IAT Max": 87893};
+            }
+            
+            formData.append('network_features', JSON.stringify(networkFeatures));
+            
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                const resDiv = document.getElementById('uploadResult');
+                if (data.error) {
+                    resDiv.innerHTML = `<span style="color: #f44336;">Error: ${data.error}</span>`;
+                } else {
+                    resDiv.innerHTML = `<span style="color: #4CAF50;">Success: ${data.message} | IDS: ${data.prediction}</span>`;
+                }
+                setTimeout(() => location.reload(), 2000); // Reload to show new log
+            })
+            .catch(error => {
+                console.error('Error:', error);
+            });
+        });
+
+        function deleteFile(filename) {
+            if(confirm('Are you sure you want to securely delete ' + filename + '?')) {
+                fetch('/files/' + filename, {
+                    method: 'DELETE'
+                })
+                .then(response => response.json())
+                .then(data => {
+                    alert(data.message || 'File deleted');
+                    location.reload();
+                })
+                .catch(err => {
+                    console.error('Error deleting file:', err);
+                    alert('Error deleting file');
+                });
+            }
+        }
+    </script>
+</body>
+</html>

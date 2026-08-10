@@ -1,0 +1,69 @@
+{
+    "accuracy": 0.9855622437407311,
+    "classes": [
+        "Botnet ARES",
+        "Brute Force",
+        "Dos/DDos",
+        "Infiltration",
+        "Normal",
+        "PortScan",
+        "Web Attack"
+    ],
+    "report": {
+        "Botnet ARES": {
+            "precision": 0.9892241379310345,
+            "recall": 0.9849785407725322,
+            "f1-score": 0.9870967741935484,
+            "support": 466.0
+        },
+        "Brute Force": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 2550.0
+        },
+        "Dos/DDos": {
+            "precision": 0.9758002756930617,
+            "recall": 0.9804555247768544,
+            "f1-score": 0.9781223612497122,
+            "support": 6498.0
+        },
+        "Infiltration": {
+            "precision": 1.0,
+            "recall": 0.7142857142857143,
+            "f1-score": 0.8333333333333334,
+            "support": 7.0
+        },
+        "Normal": {
+            "precision": 0.9782976758503925,
+            "recall": 0.9717168628650054,
+            "f1-score": 0.9749961650559902,
+            "support": 6541.0
+        },
+        "PortScan": {
+            "precision": 0.9988976377952756,
+            "recall": 0.9993697809988971,
+            "f1-score": 0.9991336536189651,
+            "support": 6347.0
+        },
+        "Web Attack": {
+            "precision": 0.9623352165725048,
+            "recall": 0.988394584139265,
+            "f1-score": 0.9751908396946565,
+            "support": 517.0
+        },
+        "accuracy": 0.9855622437407311,
+        "macro avg": {
+            "precision": 0.9863649919774671,
+            "recall": 0.9484572868340384,
+            "f1-score": 0.9639818753066008,
+            "support": 22926.0
+        },
+        "weighted avg": {
+            "precision": 0.985575519127689,
+            "recall": 0.9855622437407311,
+            "f1-score": 0.9855528401282865,
+            "support": 22926.0
+        }
+    }
+}
