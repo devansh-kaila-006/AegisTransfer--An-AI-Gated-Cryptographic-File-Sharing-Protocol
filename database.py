@@ -1,41 +1,70 @@
-import sqlite3
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
+from sqlalchemy.orm import sessionmaker, declarative_base
 import datetime
+from config import settings
 
-DB_NAME = "audit_log.db"
+engine = create_engine(
+    settings.database_url, connect_args={"check_same_thread": False}
+)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+Base = declarative_base()
+
+class AuditLog(Base):
+    __tablename__ = "audit"
+
+    id = Column(Integer, primary_key=True, index=True)
+    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+    filename = Column(String, index=True)
+    encryption_status = Column(String)
+    signature_status = Column(String)
+    ids_prediction = Column(String)
+    ids_confidence = Column(Float)
+    response_action = Column(String)
 
 def init_db():
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS audit (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT,
-            filename TEXT,
-            encryption_status TEXT,
-            signature_status TEXT,
-            ids_prediction TEXT,
-            ids_confidence REAL,
-            response_action TEXT
-        )
-    ''')
-    conn.commit()
-    conn.close()
+    Base.metadata.create_all(bind=engine)
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 def log_event(filename, enc_status, sig_status, ids_prediction, ids_confidence, action):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute('''
-        INSERT INTO audit (timestamp, filename, encryption_status, signature_status, ids_prediction, ids_confidence, response_action)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    ''', (datetime.datetime.now().isoformat(), filename, enc_status, sig_status, ids_prediction, ids_confidence, action))
-    conn.commit()
-    conn.close()
+    db = SessionLocal()
+    try:
+        new_log = AuditLog(
+            filename=filename,
+            encryption_status=enc_status,
+            signature_status=sig_status,
+            ids_prediction=ids_prediction,
+            ids_confidence=ids_confidence,
+            response_action=action
+        )
+        db.add(new_log)
+        db.commit()
+    finally:
+        db.close()
 
 def get_logs():
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    c.execute('SELECT * FROM audit ORDER BY id DESC LIMIT 50')
-    rows = c.fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    db = SessionLocal()
+    try:
+        logs = db.query(AuditLog).order_by(AuditLog.id.desc()).limit(50).all()
+        # Convert SQLAlchemy objects to dicts to maintain backward compatibility
+        return [
+            {
+                "id": log.id,
+                "timestamp": log.timestamp.isoformat() if log.timestamp else None,
+                "filename": log.filename,
+                "encryption_status": log.encryption_status,
+                "signature_status": log.signature_status,
+                "ids_prediction": log.ids_prediction,
+                "ids_confidence": log.ids_confidence,
+                "response_action": log.response_action
+            }
+            for log in logs
+        ]
+    finally:
+        db.close()
