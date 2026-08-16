@@ -1,64 +1,47 @@
-from Crypto.Cipher import PKCS1_OAEP
-from Crypto.Signature import pss
-from Crypto.Hash import SHA256
+import pqcrypto
+import os
 
 def wrap_session_key(session_key, recipient_public_key):
-    """Wraps the AES session key using RSA-OAEP.
+    """Wraps the AES session key using ML-KEM (Kyber).
     
-    Args:
-        session_key (bytes): The 32-byte AES session key to encrypt.
-        recipient_public_key (RSA._RSAobj): The RSA public key of the receiver.
-        
-    Returns:
-        bytes: The RSA-encrypted session key.
+    Since Kyber encapsulates a new shared secret rather than wrapping an existing one natively,
+    we use the generated shared secret to encrypt the existing session key via XOR (One-Time Pad).
     """
-    cipher_rsa = PKCS1_OAEP.new(recipient_public_key)
-    enc_session_key = cipher_rsa.encrypt(session_key)
-    return enc_session_key
+    kem_pk, _ = recipient_public_key
+    ct, shared_secret = pqcrypto.kem.ml_kem_512.encaps(kem_pk)
+    
+    # XOR the 32-byte session key with the 32-byte shared secret
+    wrapped_key = bytes(a ^ b for a, b in zip(session_key, shared_secret))
+    
+    # Return both the KEM ciphertext and the XOR'd key as a single payload
+    return ct + wrapped_key
 
 def unwrap_session_key(enc_session_key, recipient_private_key):
-    """Unwraps the AES session key using RSA-OAEP.
+    """Unwraps the AES session key using ML-KEM (Kyber)."""
+    kem_sk, _ = recipient_private_key
+    ct_size = pqcrypto.kem.ml_kem_512.CIPHERTEXT_SIZE
     
-    Args:
-        enc_session_key (bytes): The RSA-encrypted AES session key.
-        recipient_private_key (RSA._RSAobj): The RSA private key of the receiver.
-        
-    Returns:
-        bytes: The decrypted 32-byte AES session key.
-    """
-    cipher_rsa = PKCS1_OAEP.new(recipient_private_key)
-    session_key = cipher_rsa.decrypt(enc_session_key)
+    ct = enc_session_key[:ct_size]
+    wrapped_key = enc_session_key[ct_size:]
+    
+    # Decapsulate the shared secret (sk first, then ct)
+    shared_secret = pqcrypto.kem.ml_kem_512.decaps(kem_sk, ct)
+    
+    # Recover the original session key
+    session_key = bytes(a ^ b for a, b in zip(wrapped_key, shared_secret))
     return session_key
 
 def sign_payload(payload, sender_private_key):
-    """Signs a payload (e.g., file digest) using RSA-PSS.
-    
-    Args:
-        payload (bytes): The data (usually an authentication tag) to sign.
-        sender_private_key (RSA._RSAobj): The RSA private key of the sender.
-        
-    Returns:
-        bytes: The cryptographic digital signature.
-    """
-    h = SHA256.new(payload)
-    signature = pss.new(sender_private_key).sign(h)
+    """Signs a payload using ML-DSA (Dilithium)."""
+    _, dsa_sk = sender_private_key
+    signature = pqcrypto.sign.ml_dsa_44.sign(dsa_sk, payload)
     return signature
 
 def verify_signature(payload, signature, sender_public_key):
-    """Verifies a payload's signature using RSA-PSS.
-    
-    Args:
-        payload (bytes): The original data that was signed.
-        signature (bytes): The cryptographic signature to verify.
-        sender_public_key (RSA._RSAobj): The RSA public key of the signer.
-        
-    Returns:
-        bool: True if the signature is valid, False otherwise.
-    """
-    h = SHA256.new(payload)
-    verifier = pss.new(sender_public_key)
+    """Verifies a payload's signature using ML-DSA (Dilithium)."""
+    _, dsa_pk = sender_public_key
     try:
-        verifier.verify(h, signature)
+        pqcrypto.sign.ml_dsa_44.verify(dsa_pk, payload, signature)
         return True
-    except (ValueError, TypeError):
+    except Exception:
         return False

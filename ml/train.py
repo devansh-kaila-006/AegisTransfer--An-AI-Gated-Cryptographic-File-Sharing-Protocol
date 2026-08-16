@@ -50,13 +50,10 @@ def train_model():
     
     for name, model in models.items():
         print(f"Training {name}...")
-        
-        # Train time
         t0 = time.time()
         model.fit(X_train, y_train)
         train_time = time.time() - t0
         
-        # Inference time (batch of size len(X_test))
         t1 = time.time()
         y_pred = model.predict(X_test)
         inference_time = (time.time() - t1) * 1000 # ms
@@ -72,24 +69,68 @@ def train_model():
         
     res_df = pd.DataFrame(results)
     
-    print("\n--- K-Fold Cross Validation (Random Forest) ---")
-    # Cross validation to mathematically prove robustness without needing NSL-KDD
-    rf_cv = RandomForestClassifier(n_estimators=50, random_state=42, n_jobs=-1)
-    # Convert X[top_features] to numpy to avoid feature name warnings during CV
-    scores = cross_val_score(rf_cv, X[top_features], y_encoded, cv=5, scoring='accuracy')
-    print(f"5-Fold CV Accuracy: {scores.mean():.4f} (+/- {scores.std() * 2:.4f})")
+    # --- ADVERSARIAL ML DEFENSE PHASE ---
+    print("\n--- Phase 2: Adversarial Robustness & Training ---")
     
-    # We will save the original Random Forest trained on un-encoded labels for seamless integration with app.py
-    print("\nTraining final Production Random Forest model (Unencoded Labels)...")
-    final_rf = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
     # Re-split with unencoded y for the final model so it outputs strings like "Dos/DDos"
     X_train_unenc, X_test_unenc, y_train_unenc, y_test_unenc = train_test_split(X[top_features], y, test_size=0.25, stratify=y, random_state=42)
-    final_rf.fit(X_train_unenc, y_train_unenc)
     
-    # Plotting comparisons
+    # Train Standard (Baseline) Model
+    standard_rf = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
+    standard_rf.fit(X_train_unenc, y_train_unenc)
+    
+    # Generate Synthetic Adversarial Test Set
+    print("Generating Synthetic Adversarial Test Set (Noise Injection)...")
+    attack_indices_test = y_test_unenc != "Normal"
+    X_test_attacks = X_test_unenc[attack_indices_test].copy()
+    y_test_attacks = y_test_unenc[attack_indices_test]
+    
+    # Add 10% Gaussian noise relative to standard deviation to simulate feature evasion
+    noise = np.random.normal(0, 0.10 * X_test_attacks.std(axis=0), X_test_attacks.shape)
+    X_test_adv = X_test_attacks + noise
+    
+    # Evaluate Standard Model on Adversarial Data
+    y_pred_adv_standard = standard_rf.predict(X_test_adv)
+    acc_standard_adv = accuracy_score(y_test_attacks, y_pred_adv_standard)
+    print(f"Standard Model Accuracy on Adversarial Data: {acc_standard_adv:.4f}")
+    
+    # Generate Adversarial Training Set
+    print("Hardening Model: Generating Adversarial Training Data...")
+    attack_indices_train = y_train_unenc != "Normal"
+    X_train_attacks = X_train_unenc[attack_indices_train].copy()
+    y_train_attacks = y_train_unenc[attack_indices_train]
+    
+    noise_train = np.random.normal(0, 0.10 * X_train_attacks.std(axis=0), X_train_attacks.shape)
+    X_train_adv = X_train_attacks + noise_train
+    
+    # Concatenate clean and adversarial data
+    X_train_hardened = pd.concat([X_train_unenc, X_train_adv])
+    y_train_hardened = pd.concat([y_train_unenc, y_train_attacks])
+    
+    # Train Hardened Model
+    hardened_rf = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
+    hardened_rf.fit(X_train_hardened, y_train_hardened)
+    
+    # Evaluate Hardened Model on Adversarial Data
+    y_pred_adv_hardened = hardened_rf.predict(X_test_adv)
+    acc_hardened_adv = accuracy_score(y_test_attacks, y_pred_adv_hardened)
+    print(f"Hardened Model Accuracy on Adversarial Data: {acc_hardened_adv:.4f}")
+    
+    # Generate Adversarial Robustness Chart
     base_dir = os.path.join(os.path.dirname(__file__), '..')
     static_dir = os.path.join(base_dir, "static")
     os.makedirs(static_dir, exist_ok=True)
+    
+    plt.figure(figsize=(8, 6))
+    sns.barplot(x=['Standard RF', 'Hardened RF'], y=[acc_standard_adv, acc_hardened_adv], palette=['#f44336', '#4CAF50'])
+    plt.title('Model Robustness Against Adversarial Attacks (10% Noise)')
+    plt.ylabel('Accuracy on Adversarial Test Set')
+    plt.ylim(0, 1.0)
+    for i, v in enumerate([acc_standard_adv, acc_hardened_adv]):
+        plt.text(i, v + 0.02, f'{v:.2f}', ha='center', fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(os.path.join(static_dir, "adversarial_robustness.png"))
+    plt.close()
     
     # 1. Model Comparison Chart
     fig, ax1 = plt.subplots(figsize=(10, 6))
@@ -106,10 +147,10 @@ def train_model():
     plt.savefig(os.path.join(static_dir, "ml_comparison.png"))
     plt.close()
     
-    print(f"Saving production model and artifacts...")
+    print(f"\nSaving production Hardened model and artifacts...")
     model_path = os.path.join(os.path.dirname(__file__), "ids_model.pkl")
     features_path = os.path.join(os.path.dirname(__file__), "feature_names.pkl")
-    joblib.dump(final_rf, model_path)
+    joblib.dump(hardened_rf, model_path)
     joblib.dump(top_features, features_path)
         
     print("Training complete! Visualizations saved to /static/")

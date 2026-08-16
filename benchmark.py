@@ -37,10 +37,10 @@ def run_benchmark():
     
     # 3. Crypto Only
     KEY_PASSPHRASE = "secure_college_project_passphrase"
-    if not os.path.exists("server_private.pem"):
-        generate_key_pair("server_private.pem", "server_public.pem", passphrase=KEY_PASSPHRASE)
+    if not os.path.exists("server_private.pem_kem"):
+        generate_key_pair("server_private.pem", "server_public.pem")
         
-    priv_key = load_private_key("server_private.pem", passphrase=KEY_PASSPHRASE)
+    priv_key = load_private_key("server_private.pem")
     pub_key = load_public_key("server_public.pem")
     dummy_data = b"A" * 1024 * 1024 * 5 # 5MB file
         

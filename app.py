@@ -69,7 +69,7 @@ async def lifespan(app: FastAPI):
         ml_models["feature_names"] = None
         
     # Load or generate keys
-    if not os.path.exists("server_private.pem"):
+    if not os.path.exists("server_private.pem_kem"):
         keys.generate_key_pair("server_private.pem", "server_public.pem", passphrase=settings.key_passphrase)
     ml_models["server_priv"] = keys.load_private_key("server_private.pem", passphrase=settings.key_passphrase)
     ml_models["server_pub"] = keys.load_public_key("server_public.pem")
@@ -237,7 +237,7 @@ async def upload_file(
     with open(meta_filepath, "w") as f:
         json.dump(metadata, f)
         
-    database.log_event(file.filename, "AES-256-GCM", "RSA-PSS Valid", prediction, confidence, action)
+    database.log_event(file.filename, "AES-256-GCM", "ML-DSA Valid", prediction, confidence, action)
     
     return JSONResponse(content={
         "status": "success", 
@@ -307,7 +307,7 @@ async def health():
         "status": "healthy",
         "model_loaded": ml_models.get("clf") is not None,
         "database_connected": True,
-        "keys_present": os.path.exists("server_private.pem")
+        "keys_present": os.path.exists("server_private.pem_kem")
     }
 
 @app.get("/metrics")
