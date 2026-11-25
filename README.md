@@ -7,7 +7,7 @@ This system protects against traditional data-at-rest/data-in-transit attacks (u
 ## Features
 - **AI Pre-Emptive Protection:** Uses a Random Forest classifier trained on the modern IDS2025 dataset to detect DoS, PortScans, Brute Force, and Botnet traffic before cryptographic operations occur.
 - **Adversarial ML Defense:** The IDS model is adversarially trained against 10% Gaussian noise, increasing robustness against AI evasion attacks from 17% up to 94%.
-- **Post-Quantum Cryptography (PQC):** Secures files using AES-256-GCM (Symmetric Encryption), **ML-KEM-512 (Kyber)** for Asymmetric Key Encapsulation, and **ML-DSA-44 (Dilithium)** for Digital Signatures. Completely eliminates vulnerable legacy RSA architectures.
+- **Hybrid Cryptography:** Secures files using AES-256-GCM (Symmetric Encryption), ML-KEM-512 (Post-Quantum Key Encapsulation), and ML-DSA-44 (Post-Quantum Digital Signatures). Keys are protected at rest via PBKDF2 + AES-GCM wrapping.
 - **Robust API Hardening:** The API is protected by modern JWT Authentication (OAuth2 + bcrypt), a volumetric rate limiter (5 requests/min), CORS restrictions, and a strict 100MB max file size limit to prevent Memory Exhaustion DoS attacks. Database interactions are securely handled via SQLAlchemy ORM.
 - **Strict Input Validation & Integrity:** FastAPI and Pydantic strictly enforce valid network feature schemas. A dedicated `integrity.py` module ensures End-to-End SHA-256 hash verification alongside AES-GCM tags.
 - **Full File Lifecycle:** Secure file uploads (`/upload`), encrypted file listing (`/files`), authenticated decryption/downloads (`/download/{filename}`), and secure file deletion (`/delete`).
@@ -25,7 +25,7 @@ This system protects against traditional data-at-rest/data-in-transit attacks (u
 - `GET /metrics` - Returns the Random Forest model's performance metrics.
 
 ## Directory Structure
-- `/crypto/` - Contains the custom Post-Quantum Hybrid Cryptosystem implementation (AES + Kyber + Dilithium).
+- `/crypto/` - Contains the custom Hybrid Cryptosystem implementation (AES + ML-KEM + ML-DSA). Fully documented with Google-style docstrings.
 - `/ml/` - Contains the Machine Learning pipeline (Preprocessing, Adversarial Training, Algorithm Comparison).
 - `/docs/` - Contains detailed documentation, project overviews, and rigorous empirical results.
 - `/data/` - Contains the training datasets (e.g., `IDS2025.xlsx`).

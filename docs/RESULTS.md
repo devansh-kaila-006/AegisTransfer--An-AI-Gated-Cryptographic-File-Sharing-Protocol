@@ -42,14 +42,14 @@ To prove the production model does not overfit and generalizes perfectly to unse
 
 ---
 
-## 4. Baseline Comparison (CPU Resource Exhaustion)
-Traditional secure systems rely exclusively on cryptography. Asymmetric cryptography is computationally expensive, making these systems highly vulnerable to "Denial of Wallet" or Resource Exhaustion attacks via high volumes of fake requests.
+## 3. Baseline Comparison (CPU Resource Exhaustion)
+Traditional secure systems rely exclusively on cryptography. Post-Quantum cryptography (ML-KEM-512 and ML-DSA-44), while essential for future-proofing, still incurs significant computational overhead (especially ML-DSA's large signatures and ML-KEM's encapsulation). This makes these systems highly vulnerable to "Denial of Wallet" or Resource Exhaustion attacks via high volumes of fake requests.
 
 We simulated 100 malicious network requests hitting the server and measured CPU time across three paradigms:
 
-1. **Rate Limiting Only (IP tracking):** `~0.02 ms` (Extremely fast, but highly inaccurate—blocks legitimate users behind NATs).
-2. **AI-Gated (Our Model):** `~18.87 ms` (Smart, drops only confirmed malicious traffic instantly via Random Forest).
-3. **Traditional Crypto:** `~2875.09 ms` (Slowest, encrypts all malicious traffic blindly).
+1. **Rate Limiting Only (IP tracking):** Extremely fast, but highly inaccurate—blocks legitimate users behind NATs.
+2. **AI-Gated (Our Model):** Smart, drops only confirmed malicious traffic instantly via Random Forest.
+3. **Traditional Crypto (PQC Processing):** Slowest, blindly encapsulates keys and signs all malicious traffic.
 
 *(See `static/benchmark_baseline.png` for log-scale visualization).*
 

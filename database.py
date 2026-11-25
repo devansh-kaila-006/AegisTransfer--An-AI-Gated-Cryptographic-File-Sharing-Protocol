@@ -21,6 +21,8 @@ class AuditLog(Base):
     ids_prediction = Column(String)
     ids_confidence = Column(Float)
     response_action = Column(String)
+    username = Column(String)
+    client_ip = Column(String)
 
 def init_db():
     Base.metadata.create_all(bind=engine)
@@ -32,7 +34,7 @@ def get_db():
     finally:
         db.close()
 
-def log_event(filename, enc_status, sig_status, ids_prediction, ids_confidence, action):
+def log_event(filename, enc_status, sig_status, ids_prediction, ids_confidence, action, username="Unknown", client_ip="Unknown"):
     db = SessionLocal()
     try:
         new_log = AuditLog(
@@ -41,7 +43,9 @@ def log_event(filename, enc_status, sig_status, ids_prediction, ids_confidence, 
             signature_status=sig_status,
             ids_prediction=ids_prediction,
             ids_confidence=ids_confidence,
-            response_action=action
+            response_action=action,
+            username=username,
+            client_ip=client_ip
         )
         db.add(new_log)
         db.commit()
@@ -62,7 +66,9 @@ def get_logs():
                 "signature_status": log.signature_status,
                 "ids_prediction": log.ids_prediction,
                 "ids_confidence": log.ids_confidence,
-                "response_action": log.response_action
+                "response_action": log.response_action,
+                "username": log.username,
+                "client_ip": log.client_ip
             }
             for log in logs
         ]

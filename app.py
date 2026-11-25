@@ -3,13 +3,15 @@ import json
 import base64
 import joblib
 import pandas as pd
+import numpy as np
 import secrets
+from pathlib import Path
 from datetime import timedelta
 from fastapi import FastAPI, UploadFile, File, Form, Request, HTTPException, Depends, status
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm, HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel, Field, ValidationError
 import database
 from crypto import keys, file_cipher, session, integrity
@@ -23,9 +25,11 @@ from passlib.context import CryptContext
 from jose import JWTError, jwt
 from contextlib import asynccontextmanager
 from fastapi.concurrency import run_in_threadpool
+import hashlib
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+security_basic = HTTPBasic()
 
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
@@ -33,7 +37,6 @@ def verify_password(plain_password, hashed_password):
 def get_password_hash(password):
     return pwd_context.hash(password)
 
-# Simulated user database for JWT demonstration
 fake_users_db = {
     "admin": {
         "username": "admin",
@@ -51,6 +54,12 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None):
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
     return encoded_jwt
+
+def sanitize_filename(name: str) -> str:
+    safe = Path(name).name
+    if not safe or safe in {".", ".."}:
+        raise HTTPException(400, "Invalid filename")
+    return safe
 
 ml_models = {}
 
@@ -81,7 +90,7 @@ app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:5000", "http://localhost:5000"], # Tightened CORS
+    allow_origins=["http://127.0.0.1:5000", "http://localhost:5000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -93,15 +102,23 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.max_requests = max_requests
         self.window_seconds = window_seconds
         self.clients = defaultdict(list)
+        self.cleanup_counter = 0
         
     async def dispatch(self, request: Request, call_next):
         if request.url.path == "/upload" and request.method == "POST":
             client_ip = request.client.host
             now = time.time()
+            
+            # Periodic global sweep to prevent infinite memory growth
+            self.cleanup_counter += 1
+            if self.cleanup_counter > 100:
+                self.clients = defaultdict(list, {k: [t for t in v if now - t < self.window_seconds] for k, v in self.clients.items() if any(now - t < self.window_seconds for t in v)})
+                self.cleanup_counter = 0
+                
             self.clients[client_ip] = [req_time for req_time in self.clients[client_ip] if now - req_time < self.window_seconds]
             
             if len(self.clients[client_ip]) >= self.max_requests:
-                return JSONResponse(status_code=429, content={"error": "Rate limit exceeded: Max 5 uploads per minute to prevent volumetric DoS attacks."})
+                return JSONResponse(status_code=429, content={"error": "Rate limit exceeded: Max 5 uploads per minute."})
                 
             self.clients[client_ip].append(now)
             
@@ -135,6 +152,16 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         raise credentials_exception
     return user["username"]
 
+def get_dashboard_user(credentials: HTTPBasicCredentials = Depends(security_basic)):
+    user = fake_users_db.get(credentials.username)
+    if not user or not verify_password(credentials.password, user["hashed_password"]):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return user["username"]
+
 class NetworkFeatures(BaseModel):
     Destination_Port: float = Field(alias="Destination Port")
     Average_Packet_Size: float = Field(alias="Average Packet Size")
@@ -163,13 +190,14 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     return {"access_token": access_token, "token_type": "bearer"}
 
 @app.get("/")
-async def dashboard(request: Request):
+async def dashboard(request: Request, username: str = Depends(get_dashboard_user)):
+    # Using Basic Auth here so the browser can seamlessly access the HTML page
     logs = database.get_logs()
-    # Removing basic auth requirement from dashboard to allow login page / tokens
-    return templates.TemplateResponse(request=request, name="index.html", context={"logs": logs, "user": "Guest"})
+    return templates.TemplateResponse(request=request, name="index.html", context={"logs": logs, "user": username})
 
 @app.post("/upload")
 async def upload_file(
+    request: Request,
     file: UploadFile = File(...), 
     network_features: str = Form("{}"),
     username: str = Depends(get_current_user)
@@ -177,21 +205,23 @@ async def upload_file(
     prediction = "Normal"
     confidence = 1.0
     action = "Allowed"
+    client_ip = request.client.host
     
     clf = ml_models.get("clf")
     feature_names = ml_models.get("feature_names")
+    
+    safe_filename = sanitize_filename(file.filename)
     
     if clf and feature_names:
         try:
             features_dict = json.loads(network_features)
             validated_features = NetworkFeatures(**features_dict).model_dump(by_alias=True)
             
-            df = pd.DataFrame([validated_features])
-            df = df[feature_names]
+            # Use NumPy array instead of Pandas DataFrame for O(1) inference speed
+            features_array = np.array([[validated_features[f] for f in feature_names]])
             
-            # CPU-bound inference in threadpool
-            pred = await run_in_threadpool(clf.predict, df)
-            proba = await run_in_threadpool(clf.predict_proba, df)
+            pred = await run_in_threadpool(clf.predict, features_array)
+            proba = await run_in_threadpool(clf.predict_proba, features_array)
             
             prediction = pred[0]
             confidence = float(proba[0].max())
@@ -203,7 +233,7 @@ async def upload_file(
             print("Error in ML prediction:", e)
             
     if action == "Blocked":
-        database.log_event(file.filename, "N/A", "N/A", prediction, confidence, action)
+        database.log_event(safe_filename, "N/A", "N/A", prediction, confidence, action, username, client_ip)
         return JSONResponse(status_code=403, content={"error": f"Upload blocked due to detected threat: {prediction}"})
         
     file_data = await file.read()
@@ -215,21 +245,27 @@ async def upload_file(
     server_priv = ml_models.get("server_priv")
     server_pub = ml_models.get("server_pub")
 
-    # CPU-bound cryptography in threadpool
-    ciphertext, nonce, tag, session_key = await run_in_threadpool(file_cipher.encrypt_file, file_data)
-    enc_hash = await run_in_threadpool(integrity.compute_hash, ciphertext)
-    signature = await run_in_threadpool(session.sign_payload, tag, server_priv)
-    wrapped_key = await run_in_threadpool(session.wrap_session_key, session_key, server_pub)
+    # KEM Encapsulation (Kyber)
+    kem_ct, aes_key = await run_in_threadpool(session.new_file_key, server_pub)
     
-    enc_filepath = f"uploads/{file.filename}.enc"
+    # Authenticated Encryption (AES-GCM) with AAD
+    aad = safe_filename.encode()
+    ciphertext, nonce, tag, _ = await run_in_threadpool(file_cipher.encrypt_file, file_data, key=aes_key, aad=aad)
+    
+    # Signature Binding (Dilithium) - Signing a robust digest
+    enc_hash = await run_in_threadpool(integrity.compute_hash, ciphertext)
+    digest_to_sign = hashlib.sha256(ciphertext + tag + aad).digest()
+    signature = await run_in_threadpool(session.sign_payload, digest_to_sign, server_priv)
+    
+    enc_filepath = f"uploads/{safe_filename}.enc"
     with open(enc_filepath, "wb") as f:
         f.write(ciphertext)
         
-    meta_filepath = f"uploads/{file.filename}.meta"
+    meta_filepath = f"uploads/{safe_filename}.meta"
     metadata = {
         "nonce": base64.b64encode(nonce).decode('utf-8'),
         "tag": base64.b64encode(tag).decode('utf-8'),
-        "wrapped_key": base64.b64encode(wrapped_key).decode('utf-8'),
+        "kem_ct": base64.b64encode(kem_ct).decode('utf-8'),
         "signature": base64.b64encode(signature).decode('utf-8'),
         "initial_hash": initial_hash,
         "enc_hash": enc_hash
@@ -237,7 +273,7 @@ async def upload_file(
     with open(meta_filepath, "w") as f:
         json.dump(metadata, f)
         
-    database.log_event(file.filename, "AES-256-GCM", "ML-DSA Valid", prediction, confidence, action)
+    database.log_event(safe_filename, "AES-256-GCM + ML-KEM", "ML-DSA Valid", prediction, confidence, action, username, client_ip)
     
     return JSONResponse(content={
         "status": "success", 
@@ -252,8 +288,9 @@ async def upload_file(
 
 @app.get("/download/{filename}")
 async def download_file(filename: str, username: str = Depends(get_current_user)):
-    enc_filepath = f"uploads/{filename}.enc"
-    meta_filepath = f"uploads/{filename}.meta"
+    safe_filename = sanitize_filename(filename)
+    enc_filepath = f"uploads/{safe_filename}.enc"
+    meta_filepath = f"uploads/{safe_filename}.meta"
     
     if not os.path.exists(enc_filepath) or not os.path.exists(meta_filepath):
         raise HTTPException(status_code=404, detail="File not found")
@@ -270,24 +307,28 @@ async def download_file(filename: str, username: str = Depends(get_current_user)
         
     nonce = base64.b64decode(metadata["nonce"])
     tag = base64.b64decode(metadata["tag"])
-    wrapped_key = base64.b64decode(metadata["wrapped_key"])
+    kem_ct = base64.b64decode(metadata["kem_ct"])
     signature = base64.b64decode(metadata["signature"])
     
     server_priv = ml_models.get("server_priv")
     server_pub = ml_models.get("server_pub")
 
-    # CPU-bound verification and decryption in threadpool
-    is_valid = await run_in_threadpool(session.verify_signature, tag, signature, server_pub)
+    # Verify Signature Binding (Dilithium)
+    aad = safe_filename.encode()
+    digest_to_verify = hashlib.sha256(ciphertext + tag + aad).digest()
+    is_valid = await run_in_threadpool(session.verify_signature, digest_to_verify, signature, server_pub)
     if not is_valid:
         raise HTTPException(status_code=403, detail="Signature verification failed. File has been tampered with!")
         
+    # KEM Decapsulation (Kyber)
     try:
-        session_key = await run_in_threadpool(session.unwrap_session_key, wrapped_key, server_priv)
+        aes_key = await run_in_threadpool(session.recover_file_key, kem_ct, server_priv)
     except Exception:
-        raise HTTPException(status_code=500, detail="Failed to unwrap session key.")
+        raise HTTPException(status_code=500, detail="Failed to decapsulate session key.")
         
+    # Authenticated Decryption (AES-GCM)
     try:
-        plaintext = await run_in_threadpool(file_cipher.decrypt_file, ciphertext, nonce, tag, session_key)
+        plaintext = await run_in_threadpool(file_cipher.decrypt_file, ciphertext, nonce, tag, aes_key, aad=aad)
     except ValueError as e:
         raise HTTPException(status_code=403, detail=f"Decryption failed: {e}")
         
@@ -295,11 +336,11 @@ async def download_file(filename: str, username: str = Depends(get_current_user)
     if "initial_hash" in metadata and decrypted_hash != metadata["initial_hash"]:
         raise HTTPException(status_code=403, detail="Decrypted file integrity check failed (initial_hash mismatch).")
         
-    temp_filepath = f"uploads/temp_{filename}"
-    with open(temp_filepath, "wb") as f:
-        f.write(plaintext)
-        
-    return FileResponse(path=temp_filepath, filename=filename, media_type='application/octet-stream')
+    return Response(
+        content=plaintext,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{safe_filename}"'},
+    )
 
 @app.get("/health")
 async def health():
@@ -330,8 +371,9 @@ async def list_files(username: str = Depends(get_current_user)):
 
 @app.delete("/files/{filename}")
 async def delete_file(filename: str, username: str = Depends(get_current_user)):
-    enc_filepath = f"uploads/{filename}.enc"
-    meta_filepath = f"uploads/{filename}.meta"
+    safe_filename = sanitize_filename(filename)
+    enc_filepath = f"uploads/{safe_filename}.enc"
+    meta_filepath = f"uploads/{safe_filename}.meta"
     
     deleted = False
     if os.path.exists(enc_filepath):
@@ -344,7 +386,7 @@ async def delete_file(filename: str, username: str = Depends(get_current_user)):
     if not deleted:
         raise HTTPException(status_code=404, detail="File not found")
         
-    return {"status": "success", "message": f"Deleted {filename}"}
+    return {"status": "success", "message": f"Deleted {safe_filename}"}
 
 if __name__ == '__main__':
     uvicorn.run("app:app", host="127.0.0.1", port=5000, reload=True)
